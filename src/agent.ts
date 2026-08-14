@@ -74,7 +74,9 @@ async function main() {
                 const readResult = await client.callTool({
                     name: "notion_read_page",
                     arguments: {
-                        page_id: page.id
+                        page_id: page.id,
+                        include_properties: true,
+                        content_format: "markdown"
                     }
                 });
                 
