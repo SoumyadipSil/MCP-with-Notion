@@ -6,6 +6,13 @@ A robust, full-stack AI agent built to interact securely with private workspace 
 
 This project is structured to demonstrate a modern, agentic ReAct loop over private data. It uses an Express.js backend and a minimal Vanilla JS frontend.
 
+### Tech Stack
+- **Agent Intelligence**: `nvidia/nemotron-3-super-120b-a12b:free` (via OpenRouter)
+- **Integration Protocol**: Model Context Protocol (MCP) Node SDK
+- **Backend**: Node.js & Express.js
+- **Frontend**: Vanilla JS, HTML, CSS (Zero layout shift, minimal UI)
+- **Infrastructure**: Deployed as a free web service on Render.com
+
 ```mermaid
 sequenceDiagram
     participant User
