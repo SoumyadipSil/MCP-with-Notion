@@ -37,6 +37,30 @@ sequenceDiagram
 3. **Confidence Scoring**: The agent forces the LLM into a strict JSON output schema. It cross-references the retrieved documents to determine if the sources agree, conflict, or if there is insufficient data.
 4. **Resolution**: The frontend surfaces the final answer alongside a strict Confidence Badge (`High confidence`, `Conflicting sources`, `Insufficient data`).
 
+## Local Setup
+
+If you need to run this locally for testing:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/SoumyadipSil/MCP-with-Notion.git
+   cd MCP-with-Notion/notion-trust-agent
+   ```
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+3. **Environment Configuration:**
+   Create a `.env` file in the root directory with your keys:
+   ```env
+   NOTION_API_KEY=your_integration_secret
+   OPENROUTER_API_KEY=your_openrouter_key
+   ```
+4. **Start the Development Server:**
+   ```bash
+   npm start
+   ```
+
 ## Deployment
 
 This application is designed to be deployed as a persistent Node.js web service (e.g., Render or Railway) to support the underlying MCP child processes. 
