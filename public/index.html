@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notion Trust Agent</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --surface-color: #1a1a1a;
+            --text-primary: #ededed;
+            --text-secondary: #a1a1aa;
+            --border-color: #333333;
+            --accent: #ffffff;
+            --success: #22c55e;
+            --warning: #eab308;
+            --error: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        /* Top Right Password */
+        .auth-container {
+            position: absolute;
+            top: 2rem;
+            right: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .auth-container input {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .auth-container input:focus {
+            border-color: var(--text-secondary);
+            color: var(--text-primary);
+        }
+
+        /* Main Palette */
+        .main-container {
+            width: 100%;
+            max-width: 640px;
+            margin-top: 15vh;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .search-box {
+            position: relative;
+            width: 100%;
+        }
+
+        .search-box input {
+            width: 100%;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 1.25rem 1.5rem;
+            border-radius: 12px;
+            font-family: 'Inter', sans-serif;
+            font-size: 1.1rem;
+            outline: none;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.2s ease;
+        }
+
+        .search-box input:focus {
+            border-color: #555;
+        }
+
+        .search-box input::placeholder {
+            color: #555;
+        }
+
+        /* Result Card */
+        .result-card {
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: none;
+            flex-direction: column;
+            gap: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            animation: slideDown 0.3s ease forwards;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            width: fit-content;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .high-confidence .dot { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+        .medium-confidence .dot { background-color: var(--warning); box-shadow: 0 0 8px var(--warning); }
+        .conflicting-sources .dot { background-color: var(--error); box-shadow: 0 0 8px var(--error); }
+        .insufficient-data .dot { background-color: var(--error); box-shadow: 0 0 8px var(--error); }
+
+        .answer-text {
+            font-size: 1rem;
+            line-height: 1.6;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+        }
+
+        .reasoning-text {
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: var(--text-secondary);
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Loading Skeleton */
+        .loader {
+            display: none;
+            width: 100%;
+            padding: 1.5rem;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        .skeleton-line {
+            height: 1rem;
+            background: var(--border-color);
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+        }
+        .skeleton-line:last-child {
+            width: 60%;
+            margin-bottom: 0;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="auth-container">
+        <input type="password" id="passwordInput" placeholder="Access Code">
+    </div>
+
+    <div class="main-container">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Query the Notion workspace..." autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="loader" id="loader">
+            <div class="skeleton-line" style="width: 30%; height: 0.75rem; margin-bottom: 1.5rem;"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+        </div>
+
+        <div class="result-card" id="resultCard">
+            <div class="badge" id="confidenceBadge">
+                <div class="dot"></div>
+                <span id="confidenceLabel">Analyzing...</span>
+            </div>
+            <div class="answer-text" id="answerText"></div>
+            <div class="reasoning-text" id="reasoningText"></div>
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const passwordInput = document.getElementById('passwordInput');
+        const loader = document.getElementById('loader');
+        const resultCard = document.getElementById('resultCard');
+        
+        const confidenceBadge = document.getElementById('confidenceBadge');
+        const confidenceLabel = document.getElementById('confidenceLabel');
+        const answerText = document.getElementById('answerText');
+        const reasoningText = document.getElementById('reasoningText');
+
+        searchInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                const query = searchInput.value.trim();
+                const password = passwordInput.value.trim();
+
+                if (!query) return;
+
+                // Reset UI
+                resultCard.style.display = 'none';
+                loader.style.display = 'block';
+
+                try {
+                    const response = await fetch('/api/search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query, password })
+                    });
+
+                    const data = await response.json();
+
+                    loader.style.display = 'none';
+                    resultCard.style.display = 'flex';
+
+                    if (response.ok) {
+                        answerText.textContent = data.answer;
+                        reasoningText.textContent = `Reasoning: ${data.reasoning}`;
+                        confidenceLabel.textContent = data.confidenceLabel;
+
+                        // Reset badge classes
+                        confidenceBadge.className = 'badge';
+                        
+                        // Apply appropriate color class
+                        const labelLower = data.confidenceLabel.toLowerCase();
+                        if (labelLower.includes('high')) {
+                            confidenceBadge.classList.add('high-confidence');
+                        } else if (labelLower.includes('medium')) {
+                            confidenceBadge.classList.add('medium-confidence');
+                        } else if (labelLower.includes('conflicting')) {
+                            confidenceBadge.classList.add('conflicting-sources');
+                        } else {
+                            confidenceBadge.classList.add('insufficient-data');
+                        }
+                    } else {
+                        answerText.textContent = data.error || "An unknown error occurred.";
+                        reasoningText.textContent = "";
+                        confidenceLabel.textContent = "Error";
+                        confidenceBadge.className = 'badge conflicting-sources';
+                    }
+                } catch (error) {
+                    loader.style.display = 'none';
+                    resultCard.style.display = 'flex';
+                    answerText.textContent = "Network error. Make sure the server is running.";
+                    reasoningText.textContent = "";
+                    confidenceLabel.textContent = "Error";
+                    confidenceBadge.className = 'badge conflicting-sources';
+                }
+            }
+        });
+    </script>
+</body>
+</html>
