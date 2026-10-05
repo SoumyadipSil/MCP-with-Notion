@@ -72,6 +72,15 @@ If you need to run this locally for testing:
 
 This application is designed to be deployed as a persistent Node.js web service (e.g., Render or Railway) to support the underlying MCP child processes. 
 
+For Render, use these commands:
+
+```text
+Build Command: npm install && npm run build
+Start Command: npm start
+```
+
+The `mcp-notion-server` directory is already included in this repository. Do not clone it again during deployment; `npm run build` installs and builds the bundled server in place.
+
 *Note: Access to the web interface is protected by a secure passphrase to prevent unauthorized API usage.*
 
 ---
