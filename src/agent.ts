@@ -24,6 +24,14 @@ async function main() {
 
     // 2. Setup MCP Client for Notion
     const serverPath = path.resolve(__dirname, "../mcp-notion-server/build/index.js");
+    const maxSearchPages = 4;
+    const maxSearchTerms = 6;
+    const maxContextPages = 8;
+    const searchStopWords = new Set([
+        "and", "are", "can", "did", "does", "for", "from", "how", "into",
+        "is", "not", "the", "this", "that", "their", "what", "when", "where",
+        "which", "who", "with", "you", "your"
+    ]);
     const transport = new StdioClientTransport({
         command: "node",
         args: [serverPath],
@@ -42,24 +50,40 @@ async function main() {
     console.log(`\n🔍 Searching Notion for: "${question}"...`);
 
     try {
-        // Find relevant pages
-        const findResult = await client.callTool({
-            name: "notion_find",
-            arguments: {
-                query: question,
-                type: "page" // Only look for pages
-            }
-        });
-
-        // The tool returns text in the content array in MCP
-        const mcpContent = findResult.content as any[];
-        const searchDataText = mcpContent.find(c => c.type === 'text')?.text || '[]';
-        const searchData = JSON.parse(searchDataText);
-        
         let contextContent = "";
-        
-        // Take top 3 pages found
-        const topPages = searchData.results?.slice(0, 3) || [];
+        const terms = [...new Set(
+            question
+                .toLowerCase()
+                .replace(/[^\p{L}\p{N}\s]/gu, " ")
+                .split(/\s+/)
+                .filter(term => term.length >= 3 && !searchStopWords.has(term))
+        )].slice(0, maxSearchTerms);
+        const pages = new Map<string, any>();
+
+        for (const searchQuery of [question, ...terms]) {
+            let cursor: string | undefined;
+            for (let pageNumber = 0; pageNumber < maxSearchPages; pageNumber++) {
+                const result = await client.callTool({
+                    name: "notion_find",
+                    arguments: {
+                        query: searchQuery,
+                        object_type: "page",
+                        page_size: 100,
+                        ...(cursor ? { start_cursor: cursor } : {})
+                    }
+                });
+                const text = (result.content as any[] | undefined)?.find(c => c.type === "text")?.text;
+                if (!text) throw new Error("Notion MCP returned no text content.");
+                const data = JSON.parse(text);
+                for (const page of data.results || []) {
+                    if (page.id && !pages.has(page.id)) pages.set(page.id, page);
+                }
+                if (!data.has_more || !data.next_cursor) break;
+                cursor = data.next_cursor;
+            }
+        }
+
+        const topPages = [...pages.values()].slice(0, maxContextPages);
         
         if (topPages.length === 0) {
             console.log("No relevant pages found in Notion.");
@@ -76,7 +100,10 @@ async function main() {
                     arguments: {
                         page_id: page.id,
                         include_properties: true,
-                        content_format: "markdown"
+                        content_format: "markdown",
+                        max_depth: 4,
+                        max_blocks: 300,
+                        page_size: 100
                     }
                 });
                 

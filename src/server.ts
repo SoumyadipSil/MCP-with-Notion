@@ -16,14 +16,69 @@ app.use(express.static(path.join(__dirname, "../public")));
 const notionApiKey = process.env.NOTION_API_KEY;
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 const serverPath = path.resolve(__dirname, "../mcp-notion-server/build/index.js");
+const MAX_SEARCH_PAGES = 4;
+const MAX_SEARCH_TERMS = 6;
+const MAX_CONTEXT_PAGES = 8;
+const SEARCH_STOP_WORDS = new Set([
+    "and", "are", "can", "did", "does", "for", "from", "how", "into",
+    "is", "not", "the", "this", "that", "their", "what", "when", "where",
+    "which", "who", "with", "you", "your"
+]);
 
 let mcpClient: Client | null = null;
 let mcpTransport: StdioClientTransport | null = null;
+
+function extractToolJson(result: any): any {
+    const text = (result.content as any[] | undefined)?.find(c => c.type === "text")?.text;
+    if (!text) throw new Error("Notion MCP returned no text content.");
+    return JSON.parse(text);
+}
+
+function searchTerms(query: string): string[] {
+    return [...new Set(
+        query
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s]/gu, " ")
+            .split(/\s+/)
+            .filter(term => term.length >= 3 && !SEARCH_STOP_WORDS.has(term))
+    )].slice(0, MAX_SEARCH_TERMS);
+}
+
+async function findAccessiblePages(query: string): Promise<any[]> {
+    const queries = [query, ...searchTerms(query).filter(term => term !== query.toLowerCase())];
+    const pages = new Map<string, any>();
+
+    for (const searchQuery of queries) {
+        let cursor: string | undefined;
+        for (let pageNumber = 0; pageNumber < MAX_SEARCH_PAGES; pageNumber++) {
+            const result = await mcpClient!.callTool({
+                name: "notion_find",
+                arguments: {
+                    query: searchQuery,
+                    object_type: "page",
+                    page_size: 100,
+                    ...(cursor ? { start_cursor: cursor } : {})
+                }
+            });
+            const data = extractToolJson(result);
+            for (const page of data.results || []) {
+                if (page.id && !pages.has(page.id)) pages.set(page.id, page);
+            }
+            if (!data.has_more || !data.next_cursor) break;
+            cursor = data.next_cursor;
+        }
+    }
+
+    return [...pages.values()].slice(0, MAX_CONTEXT_PAGES);
+}
 
 // Initialize MCP Client once
 async function initMcp() {
     if (mcpClient) return;
     try {
+        if (!notionApiKey) {
+            throw new Error("NOTION_API_KEY is not configured.");
+        }
         console.log("Initializing MCP Server...");
         mcpTransport = new StdioClientTransport({
             command: "node",
@@ -59,17 +114,8 @@ app.post("/api/search", async (req, res) => {
         if (!mcpClient) throw new Error("MCP client not available.");
 
         // 1. Search Notion
-        const findResult = await mcpClient.callTool({
-            name: "notion_find",
-            arguments: { query, type: "page" }
-        });
-
-        const mcpContent = findResult.content as any[];
-        const searchDataText = mcpContent.find(c => c.type === 'text')?.text || '[]';
-        const searchData = JSON.parse(searchDataText);
-        
         let contextContent = "";
-        const topPages = searchData.results?.slice(0, 3) || [];
+        const topPages = await findAccessiblePages(query);
         
         if (topPages.length === 0) {
             return res.json({
@@ -87,7 +133,10 @@ app.post("/api/search", async (req, res) => {
                     arguments: {
                         page_id: page.id,
                         include_properties: true,
-                        content_format: "markdown"
+                        content_format: "markdown",
+                        max_depth: 4,
+                        max_blocks: 300,
+                        page_size: 100
                     }
                 });
                 const readContent = readResult.content as any[];
