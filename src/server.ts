@@ -19,11 +19,17 @@ const serverPath = path.resolve(__dirname, "../mcp-notion-server/build/index.js"
 const MAX_SEARCH_PAGES = 4;
 const MAX_SEARCH_TERMS = 6;
 const MAX_CONTEXT_PAGES = 8;
+const MAX_WORKSPACE_PAGES = 80;
+const PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 const SEARCH_STOP_WORDS = new Set([
-    "and", "are", "can", "did", "does", "for", "from", "how", "into",
-    "is", "not", "the", "this", "that", "their", "what", "when", "where",
-    "which", "who", "with", "you", "your"
+    "about", "after", "and", "are", "can", "did", "does", "for", "from",
+    "his", "how", "into", "is", "me", "not", "please", "tell", "that",
+    "the", "their", "this", "what", "when", "where", "which", "who",
+    "with", "you", "your"
 ]);
+
+type PageCandidate = { page: any; text?: string; score: number };
+let pageCache: { expiresAt: number; pages: any[] } | null = null;
 
 let mcpClient: Client | null = null;
 let mcpTransport: StdioClientTransport | null = null;
@@ -44,8 +50,49 @@ function searchTerms(query: string): string[] {
     )].slice(0, MAX_SEARCH_TERMS);
 }
 
+function normalizeText(value: string): string {
+    return value.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ");
+}
+
+function scorePage(page: any, text: string, terms: string[]): number {
+    const haystack = normalizeText(`${page.title || ""} ${text}`);
+    return terms.reduce((score, term) => {
+        const matches = haystack.match(new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"));
+        return score + (matches?.length || 0);
+    }, 0);
+}
+
+async function listAccessiblePages(): Promise<any[]> {
+    if (pageCache && pageCache.expiresAt > Date.now()) return pageCache.pages;
+
+    const pages = new Map<string, any>();
+    let cursor: string | undefined;
+    for (let pageNumber = 0; pageNumber < MAX_SEARCH_PAGES; pageNumber++) {
+        const result = await mcpClient!.callTool({
+            name: "notion_find",
+            arguments: {
+                query: "",
+                object_type: "page",
+                page_size: 100,
+                ...(cursor ? { start_cursor: cursor } : {})
+            }
+        });
+        const data = extractToolJson(result);
+        for (const page of data.results || []) {
+            if (page.id && !pages.has(page.id)) pages.set(page.id, page);
+            if (pages.size >= MAX_WORKSPACE_PAGES) break;
+        }
+        if (pages.size >= MAX_WORKSPACE_PAGES || !data.has_more || !data.next_cursor) break;
+        cursor = data.next_cursor;
+    }
+
+    pageCache = { expiresAt: Date.now() + PAGE_CACHE_TTL_MS, pages: [...pages.values()] };
+    return pageCache.pages;
+}
+
 async function findAccessiblePages(query: string): Promise<any[]> {
-    const queries = [query, ...searchTerms(query).filter(term => term !== query.toLowerCase())];
+    const terms = searchTerms(query);
+    const queries = [query, ...terms.filter(term => term !== query.toLowerCase())];
     const pages = new Map<string, any>();
 
     for (const searchQuery of queries) {
@@ -69,7 +116,37 @@ async function findAccessiblePages(query: string): Promise<any[]> {
         }
     }
 
-    return [...pages.values()].slice(0, MAX_CONTEXT_PAGES);
+    const accessiblePages = await listAccessiblePages();
+    const candidates: PageCandidate[] = [];
+    for (const page of accessiblePages) {
+        if (pages.has(page.id)) {
+            candidates.push({ page, score: scorePage(page, "", terms) + 10 });
+            continue;
+        }
+        try {
+            const readResult = await mcpClient!.callTool({
+                name: "notion_read_page",
+                arguments: {
+                    page_id: page.id,
+                    content_format: "markdown",
+                    max_depth: 4,
+                    max_blocks: 300,
+                    page_size: 100
+                }
+            });
+            const data = extractToolJson(readResult);
+            const text = data.content?.markdown || JSON.stringify(data.content || "");
+            const score = scorePage(page, text, terms);
+            if (score > 0) candidates.push({ page, text, score });
+        } catch (error) {
+            console.warn(`Unable to index Notion page ${page.id}:`, error);
+        }
+    }
+
+    return candidates
+        .sort((a, b) => b.score - a.score)
+        .slice(0, MAX_CONTEXT_PAGES)
+        .map(candidate => candidate.page);
 }
 
 // Initialize MCP Client once

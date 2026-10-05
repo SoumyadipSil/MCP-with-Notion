@@ -27,10 +27,12 @@ async function main() {
     const maxSearchPages = 4;
     const maxSearchTerms = 6;
     const maxContextPages = 8;
+    const maxWorkspacePages = 80;
     const searchStopWords = new Set([
-        "and", "are", "can", "did", "does", "for", "from", "how", "into",
-        "is", "not", "the", "this", "that", "their", "what", "when", "where",
-        "which", "who", "with", "you", "your"
+        "about", "after", "and", "are", "can", "did", "does", "for", "from",
+        "his", "how", "into", "is", "me", "not", "please", "tell", "that",
+        "the", "their", "this", "what", "when", "where", "which", "who",
+        "with", "you", "your"
     ]);
     const transport = new StdioClientTransport({
         command: "node",
@@ -83,7 +85,64 @@ async function main() {
             }
         }
 
-        const topPages = [...pages.values()].slice(0, maxContextPages);
+        let workspaceCursor: string | undefined;
+        for (let pageNumber = 0; pageNumber < maxSearchPages; pageNumber++) {
+            const result = await client.callTool({
+                name: "notion_find",
+                arguments: {
+                    query: "",
+                    object_type: "page",
+                    page_size: 100,
+                    ...(workspaceCursor ? { start_cursor: workspaceCursor } : {})
+                }
+            });
+            const text = (result.content as any[] | undefined)?.find(c => c.type === "text")?.text;
+            if (!text) throw new Error("Notion MCP returned no text content.");
+            const data = JSON.parse(text);
+            for (const page of data.results || []) {
+                if (page.id && !pages.has(page.id)) pages.set(page.id, page);
+                if (pages.size >= maxWorkspacePages) break;
+            }
+            if (pages.size >= maxWorkspacePages || !data.has_more || !data.next_cursor) break;
+            workspaceCursor = data.next_cursor;
+        }
+
+        const normalizedQuestion = question.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ");
+        const scoringTerms = [...new Set(
+            normalizedQuestion
+                .split(/\s+/)
+                .filter(term => term.length >= 3 && !searchStopWords.has(term))
+        )].slice(0, maxSearchTerms);
+        const scoredPages: Array<{ page: any; score: number }> = [];
+        for (const page of pages.values()) {
+            let text = "";
+            if (!page.title || !scoringTerms.some(term => page.title.toLowerCase().includes(term))) {
+                try {
+                    const readResult = await client.callTool({
+                        name: "notion_read_page",
+                        arguments: {
+                            page_id: page.id,
+                            content_format: "markdown",
+                            max_depth: 4,
+                            max_blocks: 300,
+                            page_size: 100
+                        }
+                    });
+                    const readText = (readResult.content as any[] | undefined)?.find(c => c.type === "text")?.text;
+                    text = readText ? JSON.parse(readText).content?.markdown || "" : "";
+                } catch (err) {
+                    console.error(`Failed to index page ${page.id}`, err);
+                }
+            }
+            const haystack = `${page.title || ""} ${text}`.toLowerCase();
+            const score = scoringTerms.reduce((total, term) => total + (haystack.split(term).length - 1), 0);
+            if (score > 0) scoredPages.push({ page, score });
+        }
+
+        const topPages = scoredPages
+            .sort((a, b) => b.score - a.score)
+            .slice(0, maxContextPages)
+            .map(candidate => candidate.page);
         
         if (topPages.length === 0) {
             console.log("No relevant pages found in Notion.");
